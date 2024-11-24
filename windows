@@ -1,0 +1,73 @@
+#include <iostream>
+#include <windows.h>
+#include <vector>
+
+bool isPrime(int n) {
+    if (n < 2) return false;
+    for (int i = 2; i * i <= n; ++i) {
+        if (n % i == 0) return false;
+    }
+    return true;
+}
+
+void findPrimesAndWrite(int start, int end, HANDLE writePipe) {
+    DWORD written;
+    for (int i = start; i <= end; ++i) {
+        if (isPrime(i)) {
+            WriteFile(writePipe, &i, sizeof(i), &written, NULL);
+        }
+    }
+    int endSignal = -1;
+    WriteFile(writePipe, &endSignal, sizeof(endSignal), &written, NULL);
+    CloseHandle(writePipe);
+}
+
+int main() {
+    const int intervalSize = 1000;
+    const int numProcesses = 10;
+
+    HANDLE pipes[numProcesses][2];
+    PROCESS_INFORMATION procInfo[numProcesses];
+    STARTUPINFO startInfo[numProcesses];
+
+    for (int i = 0; i < numProcesses; ++i) {
+        SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
+        if (!CreatePipe(&pipes[i][0], &pipes[i][1], &sa, 0)) {
+            std::cerr << "Pipe creation failed\n";
+            return 1;
+        }
+
+        ZeroMemory(&procInfo[i], sizeof(PROCESS_INFORMATION));
+        ZeroMemory(&startInfo[i], sizeof(STARTUPINFO));
+        startInfo[i].cb = sizeof(STARTUPINFO);
+
+        int start = i * intervalSize + 1;
+        int end = (i + 1) * intervalSize;
+
+        std::string command = "child.exe " + std::to_string(start) + " " + std::to_string(end);
+        if (!CreateProcess(NULL, const_cast<char *>(command.c_str()), NULL, NULL, TRUE, 0, NULL, NULL, &startInfo[i], &procInfo[i])) {
+            std::cerr << "Process creation failed\n";
+            return 1;
+        }
+        CloseHandle(pipes[i][1]);
+    }
+
+    for (int i = 0; i < numProcesses; ++i) {
+        int prime;
+        DWORD bytesRead;
+        while (ReadFile(pipes[i][0], &prime, sizeof(prime), &bytesRead, NULL) && bytesRead > 0) {
+            if (prime == -1) break;
+            std::cout << prime << " ";
+        }
+        CloseHandle(pipes[i][0]);
+    }
+
+    for (int i = 0; i < numProcesses; ++i) {
+        WaitForSingleObject(procInfo[i].hProcess, INFINITE);
+        CloseHandle(procInfo[i].hProcess);
+        CloseHandle(procInfo[i].hThread);
+    }
+
+    std::cout << "\n";
+    return 0;
+}
